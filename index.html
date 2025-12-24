@@ -4,16 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>蒙恩聽障烘焙坊參訪申請</title>
-    <!-- 引入 Tailwind CSS (樣式) -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 引入 React (核心) -->
+    <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <!-- 引入 Babel (讓瀏覽器看懂 JSX) -->
+    <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
+    <!-- Firebase Compat Library (確保可直接在本機開啟) -->
+    <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
+
     <style>
-        /* 增加淡入動畫 */
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
@@ -27,14 +31,10 @@
 <body class="bg-gray-50">
     <div id="root"></div>
 
-    <script type="text/babel" data-type="module">
+    <script type="text/babel">
         // ------------------------------------------------------------------
-        // Firebase 設定與初始化 (直接使用 CDN)
+        // Firebase 設定與初始化 (Compat Version)
         // ------------------------------------------------------------------
-        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-        import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
-        import { getFirestore, collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
-
         const firebaseConfig = {
             apiKey: "AIzaSyBRXTP7MpTGoyq_jm6CHFVGNY1U-zNvpPs",
             authDomain: "deafbakery-visit.firebaseapp.com",
@@ -44,15 +44,18 @@
             appId: "1:150016655038:web:046f394ecdfcbce9b6a8ef"
         };
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        // 初始化 (使用全域 firebase 物件)
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        const db = firebase.firestore();
         const COLLECTION_NAME = 'visit_applications';
 
         const { useState, useEffect } = React;
 
         // ------------------------------------------------------------------
-        // 主程式 (React Components)
+        // 主程式
         // ------------------------------------------------------------------
         const VisitSystem = () => {
             const [user, setUser] = useState(null);
@@ -66,12 +69,12 @@
 
             // 1. 驗證登入狀態
             useEffect(() => {
-                const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+                const unsubscribe = auth.onAuthStateChanged((currentUser) => {
                     if (currentUser) {
                         setUser(currentUser);
                         setConfigError(null);
                     } else {
-                        signInAnonymously(auth).catch((error) => {
+                        auth.signInAnonymously().catch((error) => {
                             console.error("匿名登入失敗:", error);
                             setIsDemoMode(true);
                             setUser({ uid: 'demo-user', isAnonymous: true });
@@ -79,6 +82,7 @@
                             if (error.code === 'auth/configuration-not-found' || error.code === 'auth/operation-not-allowed') {
                                 setConfigError("請至 Firebase Console > Authentication 開啟「Anonymous」");
                             } else if (error.code === 'auth/unauthorized-domain') {
+                                // 本地開啟 file:// 時通常不會觸發這個，但上線後可能會
                                 setConfigError(`網域未授權：請至 Firebase Console 新增網址：${window.location.hostname}`);
                             } else {
                                 setConfigError(`連線驗證失敗 (${error.code})`);
@@ -97,18 +101,20 @@
                     return;
                 }
 
-                const q = query(collection(db, COLLECTION_NAME), orderBy('submitDate', 'desc'));
-                const unsubscribe = onSnapshot(q, (snapshot) => {
-                    const apps = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setApplications(apps);
-                    setLoading(false);
-                }, (error) => {
-                    console.error("Data fetch error:", error);
-                    if (error.code === 'permission-denied') {
-                        showNotification("權限不足：請檢查 Firestore Rules", "error");
-                    }
-                    setLoading(false);
-                });
+                // 使用 Compat 語法
+                const unsubscribe = db.collection(COLLECTION_NAME)
+                    .orderBy('submitDate', 'desc')
+                    .onSnapshot((snapshot) => {
+                        const apps = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setApplications(apps);
+                        setLoading(false);
+                    }, (error) => {
+                        console.error("Data fetch error:", error);
+                        if (error.code === 'permission-denied') {
+                            showNotification("權限不足：請檢查 Firestore Rules", "error");
+                        }
+                        setLoading(false);
+                    });
                 return () => unsubscribe();
             }, [isAdmin, user, isDemoMode]);
 
@@ -163,7 +169,7 @@
                 }
 
                 const newApp = {
-                    id: isDemoMode ? Date.now().toString() : undefined,
+                    // id: 自動生成
                     submitDate: new Date().toISOString().split('T')[0],
                     createdAt: new Date().toISOString(),
                     ...formData,
@@ -173,13 +179,15 @@
                 };
 
                 if (isDemoMode) {
+                    // 本地模式需要手動加 ID
+                    newApp.id = Date.now().toString();
                     setApplications(prev => [newApp, ...prev]);
                     showNotification('演示模式：資料已暫存於瀏覽器', 'warning');
                     setView('success');
                     resetForm();
                 } else {
                     try {
-                        await addDoc(collection(db, COLLECTION_NAME), newApp);
+                        await db.collection(COLLECTION_NAME).add(newApp);
                         showNotification('申請已送出！我們會盡快與您聯繫。');
                         setView('success');
                         resetForm();
@@ -222,8 +230,7 @@
                     return;
                 }
                 try {
-                    const docRef = doc(db, COLLECTION_NAME, id);
-                    await updateDoc(docRef, { status: newStatus });
+                    await db.collection(COLLECTION_NAME).doc(id).update({ status: newStatus });
                     showNotification(`狀態更新成功`);
                 } catch (error) {
                     console.error(error);

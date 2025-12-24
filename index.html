@@ -1,3 +1,6 @@
+// !!! 重要：請務必將此檔案以 [UTF-8] 編碼格式儲存，否則網頁會出現亂碼 !!!
+// If you see garbled text, please save this file with UTF-8 encoding.
+
 import React, { useState, useEffect } from 'react';
 import { Calendar, Clock, Users, FileText, CheckCircle, Lock, Phone, Mail, Building, Briefcase, Heart, User, AlertCircle, LogOut, ChevronRight, Search, Loader, WifiOff } from 'lucide-react';
 
@@ -36,14 +39,20 @@ const VisitSystem = () => {
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [configError, setConfigError] = useState(null);
 
-  // --- 0. 設定網頁標題與編碼提示 ---
+  // --- 0. 強制設定網頁標題與編碼提示 ---
   useEffect(() => {
+    // 設定網頁標題
     document.title = "蒙恩聽障烘焙坊參訪申請";
-    // 嘗試動態加入 charset meta (如果原本 HTML 遺漏)
-    if (!document.querySelector("meta[charset]")) {
-        const meta = document.createElement('meta');
+    
+    // 檢查並強制加入 meta charset UTF-8
+    // 雖然這通常要在 HTML 載入前設定，但在 SPA 中補強也有幫助
+    let meta = document.querySelector("meta[charset]");
+    if (!meta) {
+        meta = document.createElement('meta');
         meta.setAttribute('charset', 'utf-8');
         document.head.prepend(meta);
+    } else if (meta.getAttribute('charset').toLowerCase() !== 'utf-8') {
+        meta.setAttribute('charset', 'utf-8');
     }
   }, []);
 

@@ -48,16 +48,21 @@ const VisitSystem = () => {
         signInAnonymously(auth).catch((error) => {
              console.error("匿名登入失敗:", error);
              
-             // 如果是設定錯誤，自動切換到 Demo 模式
+             // 進入 Demo 模式，讓 UI 保持可見
+             setIsDemoMode(true);
+             setUser({ uid: 'demo-user', isAnonymous: true });
+
+             // 針對不同錯誤給予具體引導
              if (error.code === 'auth/configuration-not-found' || error.code === 'auth/operation-not-allowed') {
-                 setIsDemoMode(true);
-                 // 建立一個假的 User 物件讓 UI 可以運作
-                 setUser({ uid: 'demo-user', isAnonymous: true });
                  setConfigError("請至 Firebase Console > Build > Authentication > Sign-in method 開啟「Anonymous」");
-                 showNotification("偵測到設定未開啟，已切換至本機演示模式", "warning");
+             } else if (error.code === 'auth/unauthorized-domain') {
+                 // 這是上線後最常見的錯誤
+                 setConfigError(`網域未授權：請至 Firebase Console > Authentication > Settings > Authorized domains 新增您的網址：${window.location.hostname}`);
              } else {
-                 showNotification("連線驗證失敗: " + error.code, "error");
+                 setConfigError(`連線驗證失敗 (${error.code})：請檢查 Firebase 設定`);
              }
+             
+             showNotification("偵測到設定問題，已切換至本機演示模式", "warning");
         });
       }
     });
@@ -305,13 +310,13 @@ const VisitSystem = () => {
                   <div>
                       <p className="font-bold text-lg">系統目前處於「演示模式 (Demo Mode)」</p>
                       <p className="mt-1">
-                          因為 Firebase 的 <strong>匿名登入 (Anonymous Auth)</strong> 尚未開啟，資料將暫存於此電腦，不會同步到雲端。
+                          因為 Firebase 的設定尚未完成，資料將暫存於此電腦，不會同步到雲端。
                       </p>
-                      <div className="mt-3 bg-white p-3 rounded border border-amber-200 text-sm font-mono text-gray-600">
+                      <div className="mt-3 bg-white p-3 rounded border border-amber-200 text-sm font-mono text-gray-600 break-all">
                           {configError}
                       </div>
                       <p className="mt-2 text-sm text-amber-700">
-                          您可以先試用功能，設定完成後請重新整理頁面。
+                          設定完成後，請重新整理頁面即可連線。
                       </p>
                   </div>
               </div>

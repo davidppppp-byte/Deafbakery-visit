@@ -36,6 +36,17 @@ const VisitSystem = () => {
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [configError, setConfigError] = useState(null);
 
+  // --- 0. 設定網頁標題與編碼提示 ---
+  useEffect(() => {
+    document.title = "蒙恩聽障烘焙坊參訪申請";
+    // 嘗試動態加入 charset meta (如果原本 HTML 遺漏)
+    if (!document.querySelector("meta[charset]")) {
+        const meta = document.createElement('meta');
+        meta.setAttribute('charset', 'utf-8');
+        document.head.prepend(meta);
+    }
+  }, []);
+
   // --- 1. Authentication ---
   useEffect(() => {
     // 監聽登入狀態

@@ -1,19 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Users, FileText, CheckCircle, Lock, Phone, Mail, Building, Briefcase, Heart, User, AlertCircle, LogOut, ChevronRight, Search, Loader } from 'lucide-react';
+import { Calendar, Clock, Users, FileText, CheckCircle, Lock, Phone, Mail, Building, Briefcase, Heart, User, AlertCircle, LogOut, ChevronRight, Search, Loader, WifiOff } from 'lucide-react';
 
 // Firebase SDK Imports
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, addDoc, updateDoc, doc, onSnapshot } from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
+import { getFirestore, collection, addDoc, updateDoc, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
 
-// --- Firebase Configuration & Initialization ---
-const firebaseConfig = JSON.parse(__firebase_config);
+// --- 您的 Firebase 設定 ---
+const firebaseConfig = {
+  apiKey: "AIzaSyBRXTP7MpTGoyq_jm6CHFVGNY1U-zNvpPs",
+  authDomain: "deafbakery-visit.firebaseapp.com",
+  projectId: "deafbakery-visit",
+  storageBucket: "deafbakery-visit.firebasestorage.app",
+  messagingSenderId: "150016655038",
+  appId: "1:150016655038:web:046f394ecdfcbce9b6a8ef"
+};
+
+// 初始化 Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-// 集合名稱常量
+// 集合名稱常量 (資料庫中的資料夾名稱)
 const COLLECTION_NAME = 'visit_applications';
 
 const VisitSystem = () => {
@@ -23,55 +31,76 @@ const VisitSystem = () => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [notification, setNotification] = useState(null);
   const [loading, setLoading] = useState(true);
+  
+  // 新增：Demo 模式狀態 (當 Firebase 設定有誤時，自動切換為本地模式)
+  const [isDemoMode, setIsDemoMode] = useState(false);
+  const [configError, setConfigError] = useState(null);
 
   // --- 1. Authentication ---
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (error) {
-        console.error("Auth error:", error);
-        showNotification("連線驗證失敗，請重新整理頁面", "error");
+    // 監聽登入狀態
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser) {
+          setUser(currentUser);
+          setConfigError(null);
+      } else {
+        // 嘗試匿名登入
+        signInAnonymously(auth).catch((error) => {
+             console.error("匿名登入失敗:", error);
+             
+             // 如果是設定錯誤，自動切換到 Demo 模式
+             if (error.code === 'auth/configuration-not-found' || error.code === 'auth/operation-not-allowed') {
+                 setIsDemoMode(true);
+                 // 建立一個假的 User 物件讓 UI 可以運作
+                 setUser({ uid: 'demo-user', isAnonymous: true });
+                 setConfigError("請至 Firebase Console > Build > Authentication > Sign-in method 開啟「Anonymous」");
+                 showNotification("偵測到設定未開啟，已切換至本機演示模式", "warning");
+             } else {
+                 showNotification("連線驗證失敗: " + error.code, "error");
+             }
+        });
       }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
     });
     return () => unsubscribe();
   }, []);
 
-  // --- 2. Data Synchronization (Firestore) ---
+  // --- 2. Data Synchronization (Firestore vs Local) ---
   useEffect(() => {
-    if (!user) return;
+    // 如果是 Demo 模式，不連線 Firestore
+    if (isDemoMode) {
+        setLoading(false);
+        return;
+    }
 
-    // 使用 Public Data 路徑，讓所有人都能寫入，後台也能讀取
-    // 實務上正式版會做權限控管，這裡為了演示方便使用 Public
-    const q = collection(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME);
+    // 只有管理員模式下才需要即時監聽所有資料列表
+    if (!isAdmin) { 
+        setLoading(false);
+        return; 
+    }
+
+    // 如果沒有 User 且不是 Demo 模式，不執行查詢
+    if (!user && !isDemoMode) return;
+
+    const q = query(collection(db, COLLECTION_NAME), orderBy('submitDate', 'desc'));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const apps = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
-      
-      // 在客戶端進行排序 (最新的在最上面)
-      apps.sort((a, b) => new Date(b.createdWidthId || b.submitDate) - new Date(a.createdWidthId || a.submitDate));
-      
       setApplications(apps);
       setLoading(false);
     }, (error) => {
       console.error("Data fetch error:", error);
-      showNotification("資料讀取失敗", "error");
+      // 如果權限不足，也切換顯示錯誤
+      if (error.code === 'permission-denied') {
+          showNotification("權限不足：請檢查 Firestore Rules", "error");
+      }
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [isAdmin, user, isDemoMode]); 
 
   // 用戶填寫表單狀態
   const [formData, setFormData] = useState({
@@ -97,7 +126,7 @@ const VisitSystem = () => {
   // 顯示通知
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
-    setTimeout(() => setNotification(null), 3000);
+    setTimeout(() => setNotification(null), type === 'error' || type === 'warning' ? 6000 : 3000);
   };
 
   // 處理表單變更
@@ -132,11 +161,6 @@ const VisitSystem = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!user) {
-        showNotification("系統連線中，請稍後再試", "error");
-        return;
-    }
-
     // 簡單驗證日期 (需一個月前)
     const today = new Date();
     const visitDate = new Date(formData.visitDate);
@@ -156,6 +180,7 @@ const VisitSystem = () => {
     }
 
     const newApp = {
+      id: isDemoMode ? Date.now().toString() : undefined, // 本地模式需要 ID
       submitDate: new Date().toISOString().split('T')[0],
       createdAt: new Date().toISOString(), // 用於排序
       ...formData,
@@ -164,45 +189,64 @@ const VisitSystem = () => {
       status: 'pending'
     };
 
-    try {
-        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME), newApp);
-        showNotification('申請已送出！我們會盡快與您聯繫。');
+    if (isDemoMode) {
+        // --- Demo 模式：存入本地 State ---
+        setApplications(prev => [newApp, ...prev]);
+        showNotification('已送出！(注意：目前為演示模式，資料僅暫存於瀏覽器)');
         setView('success');
-        
-        // Reset form
-        setFormData({
-            groupName: '',
-            groupType: '',
-            groupTypeOther: '',
-            visitDate: '',
-            timeStart: '',
-            timeEnd: '',
-            contactPerson: '',
-            jobTitle: '',
-            phone: '',
-            email: '',
-            visitorCount: '',
-            identity: [],
-            disabledCount: '',
-            needs: [],
-            needsOther: '',
-            volunteerCert: false,
-            expectations: ''
-        });
-    } catch (error) {
-        console.error("Add doc error:", error);
-        showNotification("送出失敗，請檢查網路連線", "error");
+        resetForm();
+    } else {
+        // --- 正式模式：寫入 Firestore ---
+        try {
+            await addDoc(collection(db, COLLECTION_NAME), newApp);
+            showNotification('申請已送出！我們會盡快與您聯繫。');
+            setView('success');
+            resetForm();
+        } catch (error) {
+            console.error("Add doc error:", error);
+            let errorMsg = "送出失敗，請檢查網路連線";
+            if (error.code === 'permission-denied') {
+                errorMsg = "權限不足：請至 Firebase Console 檢查 Firestore Rules (是否已允許寫入)";
+            }
+            showNotification(errorMsg, "error");
+        }
     }
+  };
+  
+  const resetForm = () => {
+    setFormData({
+        groupName: '',
+        groupType: '',
+        groupTypeOther: '',
+        visitDate: '',
+        timeStart: '',
+        timeEnd: '',
+        contactPerson: '',
+        jobTitle: '',
+        phone: '',
+        email: '',
+        visitorCount: '',
+        identity: [],
+        disabledCount: '',
+        needs: [],
+        needsOther: '',
+        volunteerCert: false,
+        expectations: ''
+    });
   };
 
   // 後台登入
   const [loginData, setLoginData] = useState({ username: '', password: '' });
+  
   const handleLogin = (e) => {
     e.preventDefault();
-    // 這裡維持簡單的前端密碼驗證，實際專案建議整合 Firebase Auth 的 Email/Password 登入
     if (loginData.username === 'admin' && loginData.password === '22335678') {
       setIsAdmin(true);
+      setLoading(true); // 開始載入資料
       setView('admin-dashboard');
+      
+      // 如果是 Demo 模式，不需要 loading
+      if (isDemoMode) setLoading(false);
     } else {
       showNotification('帳號或密碼錯誤', 'error');
     }
@@ -210,8 +254,16 @@ const VisitSystem = () => {
 
   // 更新狀態
   const updateStatus = async (id, newStatus) => {
+    if (isDemoMode) {
+        setApplications(apps => apps.map(app => 
+            app.id === id ? { ...app, status: newStatus } : app
+        ));
+        showNotification(`狀態已更新為：${getStatusLabel(newStatus)} (演示模式)`);
+        return;
+    }
+
     try {
-        const docRef = doc(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME, id);
+        const docRef = doc(db, COLLECTION_NAME, id);
         await updateDoc(docRef, { status: newStatus });
         showNotification(`狀態已更新為：${getStatusLabel(newStatus)}`);
     } catch (error) {
@@ -245,6 +297,27 @@ const VisitSystem = () => {
 
   const HomeView = () => (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-8 animate-fade-in">
+      {/* 錯誤配置提示橫幅 */}
+      {configError && (
+          <div className="w-full max-w-3xl bg-amber-50 border-l-4 border-amber-500 text-amber-800 p-4 mb-4 text-left shadow-sm rounded-r">
+              <div className="flex items-start">
+                  <WifiOff className="w-6 h-6 mr-3 mt-1 flex-shrink-0" />
+                  <div>
+                      <p className="font-bold text-lg">系統目前處於「演示模式 (Demo Mode)」</p>
+                      <p className="mt-1">
+                          因為 Firebase 的 <strong>匿名登入 (Anonymous Auth)</strong> 尚未開啟，資料將暫存於此電腦，不會同步到雲端。
+                      </p>
+                      <div className="mt-3 bg-white p-3 rounded border border-amber-200 text-sm font-mono text-gray-600">
+                          {configError}
+                      </div>
+                      <p className="mt-2 text-sm text-amber-700">
+                          您可以先試用功能，設定完成後請重新整理頁面。
+                      </p>
+                  </div>
+              </div>
+          </div>
+      )}
+
       <div className="max-w-2xl px-6">
         <h1 className="text-4xl font-bold text-gray-800 mb-4">蒙恩聽障烘焙坊</h1>
         <h2 className="text-2xl text-orange-600 mb-6 font-medium">參訪申請</h2>
@@ -289,9 +362,12 @@ const VisitSystem = () => {
         <h2 className="text-2xl font-bold flex items-center">
           <FileText className="mr-2" /> 參訪申請
         </h2>
-        <button onClick={() => setView('home')} className="text-white/80 hover:text-white text-sm underline">
-          回首頁
-        </button>
+        <div className="flex items-center gap-4">
+             {isDemoMode && <span className="text-xs bg-amber-200 text-amber-800 px-2 py-1 rounded font-bold">演示模式</span>}
+             <button onClick={() => setView('home')} className="text-white/80 hover:text-white text-sm underline">
+              回首頁
+            </button>
+        </div>
       </div>
       
       <form onSubmit={handleSubmit} className="p-8 space-y-8">
@@ -469,10 +545,15 @@ const VisitSystem = () => {
 
   const SuccessView = () => (
     <div className="flex flex-col items-center justify-center h-[60vh] text-center animate-fade-in">
-        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6">
-            <CheckCircle className="w-10 h-10 text-green-600" />
+        <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-6 ${isDemoMode ? 'bg-amber-100' : 'bg-green-100'}`}>
+            <CheckCircle className={`w-10 h-10 ${isDemoMode ? 'text-amber-600' : 'text-green-600'}`} />
         </div>
         <h2 className="text-3xl font-bold text-gray-800 mb-4">申請已成功送出！</h2>
+        {isDemoMode && (
+            <div className="bg-amber-50 text-amber-800 p-3 rounded-lg mb-4 text-sm max-w-md">
+                <strong>注意：</strong> 目前為演示模式，資料僅暫存於您的瀏覽器，重新整理後將會消失。請聯繫管理員完成 Firebase 設定。
+            </div>
+        )}
         <p className="text-gray-600 max-w-md mb-8">
             感謝您對蒙恩的支持。我們的同仁將會審核您的申請，並透過電話或 Email 與您聯繫確認最終安排。
         </p>
@@ -512,6 +593,7 @@ const VisitSystem = () => {
         <div className="bg-white shadow-sm border-b px-6 py-4 flex justify-between items-center mb-6">
             <h2 className="text-xl font-bold text-gray-800 flex items-center">
                 <Briefcase className="mr-2 text-orange-600"/> 參訪申請管理後台
+                {isDemoMode && <span className="ml-3 text-xs bg-amber-200 text-amber-800 px-2 py-1 rounded">演示模式</span>}
             </h2>
             <div className="flex items-center gap-4">
                 <span className="text-sm text-gray-600 bg-gray-100 px-3 py-1 rounded-full">管理員：Admin</span>
@@ -616,7 +698,7 @@ const VisitSystem = () => {
 
       {/* Notification Toast */}
       {notification && (
-        <div className={`fixed top-20 right-4 p-4 rounded-lg shadow-lg z-50 text-white transition-opacity ${notification.type === 'error' ? 'bg-red-500' : 'bg-green-500'}`}>
+        <div className={`fixed top-20 right-4 p-4 rounded-lg shadow-lg z-50 text-white transition-opacity ${notification.type === 'error' || notification.type === 'warning' ? (notification.type === 'warning' ? 'bg-amber-500' : 'bg-red-500') : 'bg-green-500'}`}>
           {notification.message}
         </div>
       )}
